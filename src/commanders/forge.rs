@@ -1,177 +1,170 @@
-use crate::clie::ForgeArgs;
-use crate::storme::PageNumberExtractor;
-
-use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
+use crate::clie::{ForgeArgs, Lang};
+use crate::storme::Storme;
+use indicatif::{ProgressBar, ProgressStyle};
 use rayon::prelude::*;
-use std::collections::HashSet;
+use serde::{Deserialize, Serialize};
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
-use std::time::{Instant, SystemTime};
-use uuid::Uuid;
 use walkdir::WalkDir;
 
-pub fn run(args: ForgeArgs) -> io::Result<()> {
-    let extractor = std::sync::Arc::new(
-        PageNumberExtractor::new("core/text-detector.rten", "core/text-recognitor.rten")
-            .ok_or_else(|| io::Error::other("Modeller yüklenemedi"))?,
-    );
+#[derive(Serialize, Deserialize)]
+struct ForgeRapor {
+    basarili: Vec<String>,
+    basarisiz: Vec<String>,
+}
 
-    let total_cpus = num_cpus::get();
-    let num_threads = if args.omega {
-        ((total_cpus as f32 * 0.80).ceil() as usize).max(1)
+pub fn run(args: ForgeArgs, dil: Lang) -> io::Result<()> {
+    let model_yolu = if let Some(ref ozel_yol) = args.model {
+        let yol = PathBuf::from(ozel_yol);
+        if yol.exists() { Some(yol) } else { None }
     } else {
-        ((total_cpus as f32 * 0.40).ceil() as usize).max(1)
+        fs::read_dir("core/models").ok().and_then(|mut entries| {
+            entries.find_map(|entry| {
+                let path = entry.ok()?.path();
+                if path.extension().and_then(|e| e.to_str()) == Some("safetensors") {
+                    Some(path)
+                } else {
+                    None
+                }
+            })
+        })
     };
 
-    if args.omega {
+    if let Some(ref yol) = model_yolu {
         println!(
-            "Omega Activate!: CPU will run at 90% capacity!! ({}/{} threads)",
-            num_threads, total_cpus
+            "{} ({:?})",
+            dil.t("forge_model_found"),
+            yol.file_name().unwrap_or_default()
         );
+    } else {
+        println!("{}", dil.t("forge_model_missing"));
     }
 
-    let pool = rayon::ThreadPoolBuilder::new()
-        .num_threads(num_threads)
+    let toplam_cpu = num_cpus::get();
+    let is_parcasi = if args.omega {
+        ((toplam_cpu as f32 * 0.80).ceil() as usize).max(1)
+    } else {
+        ((toplam_cpu as f32 * 0.40).ceil() as usize).max(1)
+    };
+
+    let havuz = rayon::ThreadPoolBuilder::new()
+        .num_threads(is_parcasi)
         .build()
         .map_err(io::Error::other)?;
 
-    let files = collect_and_sort(&args.directory)?;
-    let total = files.len();
-
-    if total == 0 {
-        println!(
-            "ERROR: '{}' No files were found in the directory.",
-            args.directory
-        );
-        return Ok(());
-    }
-
-    let m = MultiProgress::new();
-    let pb_ocr = m.add(ProgressBar::new(total as u64));
-    let pb_rename = m.add(ProgressBar::new(total as u64));
-
-    let style_shared = ProgressStyle::with_template(
-        "[{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} ({eta}) {msg}",
-    )
-    .unwrap()
-    .progress_chars("##-");
-
-    pb_ocr.set_style(style_shared.clone());
-    pb_ocr.set_message("Analyzing (OCR)...");
-    pb_rename.set_style(style_shared);
-    pb_rename.set_message("Renaming...");
-
-    let start_ocr = Instant::now();
-    let results: Vec<(PathBuf, Option<String>)> = pool.install(|| {
-        files
-            .par_iter()
-            .map(|path| {
-                let number = image::open(path)
-                    .ok()
-                    .and_then(|img| extractor.extract(&img, None, args.top));
-                pb_ocr.inc(1);
-                (path.clone(), number)
-            })
-            .collect()
-    });
-    pb_ocr.finish_with_message(format!("OCR completed! ({:.2?})", start_ocr.elapsed()));
-
-    let start_rename = Instant::now();
-    let mut temp_mappings = Vec::new();
-
-    for (original, number_opt) in results {
-        if let Some(number) = number_opt {
-            let ext = original
-                .extension()
-                .and_then(|e| e.to_str())
-                .unwrap_or("jpg");
-            let temp_name = format!("__tmp_{}.{}", Uuid::new_v4(), ext);
-            let temp_path = original.parent().unwrap().join(temp_name);
-
-            if fs::rename(&original, &temp_path).is_ok() {
-                temp_mappings.push((temp_path, number));
-            }
-        } else {
-            pb_rename.inc(1);
-        }
-    }
-
-    let mut used_names = HashSet::new();
-    for (temp_path, num_str) in temp_mappings {
-        let final_path = generate_unique_name(
-            temp_path.parent().unwrap(),
-            &args.prefix,
-            &num_str,
-            &mut used_names,
-        );
-        let _ = fs::rename(temp_path, final_path);
-        pb_rename.inc(1);
-    }
-
-    pb_rename.finish_with_message(format!(
-        "Renaming completed! ({:.2?})",
-        start_rename.elapsed()
-    ));
-
-    println!(
-        "\n Transaction completed successfully!\n Total duration: {:.2?}",
-        start_ocr.elapsed() + start_rename.elapsed()
-    );
-
-    Ok(())
-}
-
-fn collect_and_sort(directory: &str) -> io::Result<Vec<PathBuf>> {
-    let mut files: Vec<PathBuf> = WalkDir::new(directory)
-        .max_depth(1)
+    let mut dosyalar: Vec<PathBuf> = WalkDir::new(&args.directory)
+        .max_depth(2)
         .follow_links(true)
         .into_iter()
         .filter_map(|e| e.ok())
         .filter(|e| e.path().is_file())
         .map(|e| e.path().to_path_buf())
         .filter(|p| {
-            let s = p.to_string_lossy().to_lowercase();
-            s.ends_with(".jpg") || s.ends_with(".jpeg")
+            p.extension()
+                .map(|e| {
+                    let ext = e.to_string_lossy().to_lowercase();
+                    ext == "jpg" || ext == "jpeg" || ext == "pdf" || ext == "txt" || ext == "epub"
+                })
+                .unwrap_or(false)
         })
         .collect();
 
-    if files.is_empty() {
-        return Err(io::Error::other("Currently, only JPG/JPEG is supported."));
+    if dosyalar.is_empty() {
+        println!("{}", dil.t("no_files"));
+        return Ok(());
     }
+    dosyalar.sort();
 
-    files.sort_by(|a, b| {
-        let meta_a = fs::metadata(a)
-            .and_then(|m| m.created().or_else(|_| m.modified()))
-            .unwrap_or(SystemTime::UNIX_EPOCH);
-        let meta_b = fs::metadata(b)
-            .and_then(|m| m.created().or_else(|_| m.modified()))
-            .unwrap_or(SystemTime::UNIX_EPOCH);
-        meta_a
-            .cmp(&meta_b)
-            .then_with(|| a.file_name().cmp(&b.file_name()))
+    let pb = ProgressBar::new(dosyalar.len() as u64);
+    pb.set_style(
+        ProgressStyle::with_template("[{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} {msg}")
+            .unwrap()
+            .progress_chars("##-"),
+    );
+    pb.set_message(dil.t("forge_scanning"));
+
+    let gorev_sonuclari: Vec<(String, PathBuf)> = havuz.install(|| {
+        dosyalar
+            .par_iter()
+            .map(|dosya| {
+                let uzanti = dosya
+                    .extension()
+                    .and_then(|e| e.to_str())
+                    .unwrap_or("")
+                    .to_lowercase();
+
+                let ham_metin = match uzanti.as_str() {
+                    "txt" => fs::read_to_string(dosya).unwrap_or_default(),
+                    "pdf" => match fs::read(dosya).and_then(|bytes| {
+                        pdf_extract::extract_text_from_mem(&bytes)
+                            .map_err(|_| io::Error::other("PDF parse error"))
+                    }) {
+                        Ok(text) => text,
+                        Err(_) => format!("[{} {:?}]", dil.t("pdf_extract_error"), dosya),
+                    },
+                    _ => format!("[{} {:?}]", dil.t("image_file_pointer"), dosya),
+                };
+
+                let temiz_metin =
+                    Storme::akademik_temizle(&ham_metin, args.top, args.strip_footers);
+
+                pb.inc(1);
+                (temiz_metin, dosya.clone())
+            })
+            .collect()
     });
+    pb.finish_with_message(dil.t("forge_saving_corpus"));
 
-    Ok(files)
-}
+    let mut rapor = ForgeRapor {
+        basarili: vec![],
+        basarisiz: vec![],
+    };
 
-fn generate_unique_name(
-    dir: &Path,
-    prefix: &str,
-    number: &str,
-    used: &mut HashSet<String>,
-) -> PathBuf {
-    let mut counter = 0;
-    loop {
-        let name = if counter == 0 {
-            format!("{}_{}.jpg", prefix, number)
+    for (idx, (icerik_metni, orijinal_yol)) in gorev_sonuclari.into_iter().enumerate() {
+        let sayac = idx + 1;
+        let dosya_adi_md = format!("{}_{:04}.md", args.prefix, sayac);
+        let dosya_adi_txt = format!("{}_{:04}.txt", args.prefix, sayac);
+
+        let hedef_yol_md = Path::new(&args.directory).join(dosya_adi_md);
+        let hedef_yol_txt = Path::new(&args.directory).join(dosya_adi_txt);
+
+        let markdown_cikti = format!(
+            "# {}\n- {}: {:?}\n\n{}",
+            dil.t("corpus_doc"),
+            dil.t("md_source"),
+            orijinal_yol,
+            icerik_metni
+        );
+        let md_basarili = fs::write(&hedef_yol_md, &markdown_cikti).is_ok();
+        let txt_basarili = fs::write(&hedef_yol_txt, &icerik_metni).is_ok();
+
+        if md_basarili && txt_basarili {
+            rapor
+                .basarili
+                .push(hedef_yol_md.to_string_lossy().to_string());
+            rapor
+                .basarili
+                .push(hedef_yol_txt.to_string_lossy().to_string());
         } else {
-            format!("{}_{}_{}.jpg", prefix, number, counter)
-        };
-        if !used.contains(&name) && !dir.join(&name).exists() {
-            used.insert(name.clone());
-            return dir.join(name);
+            rapor.basarisiz.push(format!("{:?}", orijinal_yol));
         }
-        counter += 1;
     }
+
+    let rapor_adi = format!("{}_forge_report.json", args.prefix);
+    let rapor_yolu = Path::new(&args.directory).join(rapor_adi);
+    let json = serde_json::to_string_pretty(&rapor).unwrap();
+    let _ = fs::write(&rapor_yolu, json);
+
+    println!("\n {}", dil.t("forge_done"));
+    println!(
+        "{}: {}, {}: {}",
+        dil.t("forge_success_count"),
+        rapor.basarili.len(),
+        dil.t("fail_label"),
+        rapor.basarisiz.len()
+    );
+    println!("{}: {}", dil.t("report_file"), rapor_yolu.display());
+
+    Ok(())
 }

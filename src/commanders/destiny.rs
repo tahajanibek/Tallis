@@ -4,11 +4,11 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
-use crate::clie::DestinyArgs;
+use crate::clie::{DestinyArgs, Lang};
 use uuid::Uuid;
 use walkdir::WalkDir;
 
-pub fn run(args: DestinyArgs) -> io::Result<()> {
+pub fn run(args: DestinyArgs, dil: Lang) -> io::Result<()> {
     let target_ext = args.extension.to_lowercase().replace(".", "");
 
     let mut entries: Vec<PathBuf> = WalkDir::new(&args.directory)
@@ -27,10 +27,7 @@ pub fn run(args: DestinyArgs) -> io::Result<()> {
         .collect();
 
     if entries.is_empty() {
-        println!(
-            "ERROR: No files with the .{} extension were found in the '{}' directory.",
-            args.directory, target_ext
-        );
+        println!("{}", dil.t("no_files"));
         return Ok(());
     }
 
@@ -51,9 +48,10 @@ pub fn run(args: DestinyArgs) -> io::Result<()> {
     });
 
     println!(
-        "{} .{} files were found. Processing is starting...",
+        "{} .{} {}",
         entries.len(),
-        target_ext
+        target_ext,
+        dil.t("destiny_start")
     );
 
     let mut temp_mappings = Vec::new();
@@ -63,7 +61,8 @@ pub fn run(args: DestinyArgs) -> io::Result<()> {
 
         if let Err(e) = fs::rename(original, &temp_path) {
             eprintln!(
-                "Warning: Could not move file {:?}: {}",
+                "{} {:?}: {}",
+                dil.t("destiny_warn"),
                 original.file_name(),
                 e
             );
@@ -90,11 +89,7 @@ pub fn run(args: DestinyArgs) -> io::Result<()> {
         }
     }
 
-    println!(
-        "Operation completed: {}/{} files were renamed.",
-        count, total_to_process
-    );
-
+    println!("{}: {}/{}", dil.t("destiny_done"), count, total_to_process);
     Ok(())
 }
 

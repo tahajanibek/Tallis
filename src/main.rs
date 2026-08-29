@@ -1,4 +1,5 @@
 mod clie;
+mod indi;
 mod storme;
 mod commanders {
     pub mod destiny;
@@ -12,11 +13,12 @@ use std::io;
 
 fn main() -> io::Result<()> {
     let cli = Cli::parse();
+    let dil = cli.dil;
 
     match cli.command {
-        Commands::Forge(args) => commanders::forge::run(args)?,
-        Commands::Destiny(args) => commanders::destiny::run(args)?,
-        Commands::Quozart7(args) => commanders::quozart7::run(args)?,
+        Commands::Forge(args) => commanders::forge::run(args, dil)?,
+        Commands::Destiny(args) => commanders::destiny::run(args, dil)?,
+        Commands::Quozart7(args) => commanders::quozart7::run(args, dil)?,
     }
 
     Ok(())

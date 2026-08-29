@@ -1,52 +1,47 @@
-use crate::clie::Quozart7Args;
-use crate::storme::PageNumberExtractor;
+use crate::clie::{Lang, Quozart7Args};
+use crate::indi::model_kontrol_ve_yonet;
+use crate::storme::Storme;
+use venexus::Venexus;
 
-use image::GenericImageView;
 use indicatif::{ProgressBar, ProgressStyle};
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
-use std::collections::HashSet;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
 
 #[derive(Serialize, Deserialize)]
-struct Quozart7Report {
-    success: Vec<String>,
-    failed: Vec<String>,
+struct Quozart7Rapor {
+    basarili: Vec<String>,
+    basarisiz: Vec<String>,
 }
 
-pub fn run(args: Quozart7Args) -> io::Result<()> {
-    let extractor =
-        PageNumberExtractor::new("core/text-detector.rten", "core/text-recognitor.rten")
-            .ok_or_else(|| io::Error::other("Models could not be loaded!"))?;
+pub fn run(args: Quozart7Args, dil: Lang) -> io::Result<()> {
+    let model_yolu = model_kontrol_ve_yonet(dil)?;
+    let model_dizini = model_yolu.parent().unwrap_or(Path::new("core/models"));
+    let motor = Venexus::baslat(model_dizini)
+        .map_err(|e| io::Error::other(format!("{} {}", dil.t("venexus_init_error"), e)))?;
 
-    let total_cpus = num_cpus::get();
-    let num_threads = if args.omega {
-        ((total_cpus as f32 * 0.80).ceil() as usize).max(1)
+    match motor.cihaz {
+        candle_core::Device::Metal(_) => println!("{}", dil.t("metal_active")),
+        candle_core::Device::Cuda(_) => println!("{}", dil.t("cuda_active")),
+        candle_core::Device::Cpu => println!("{}", dil.t("cpu_active")),
+    }
+
+    let toplam_cpu = num_cpus::get();
+    let is_parcasi = if args.omega {
+        ((toplam_cpu as f32 * 0.80).ceil() as usize).max(1)
     } else {
-        ((total_cpus as f32 * 0.40).ceil() as usize).max(1)
+        ((toplam_cpu as f32 * 0.40).ceil() as usize).max(1)
     };
 
-    let pool = rayon::ThreadPoolBuilder::new()
-        .num_threads(num_threads)
+    let havuz = rayon::ThreadPoolBuilder::new()
+        .num_threads(is_parcasi)
         .build()
         .map_err(io::Error::other)?;
 
-    if !args.jpg {
-        println!("ERROR: Currently, only JPG/JPEG is supported for process.");
-        return Ok(());
-    }
-
-    if args.omega {
-        println!(
-            "Omega Activate!: CPU will run at 90% capacity! ({}/{} threads)",
-            num_threads, total_cpus
-        );
-    }
-
-    let output_dir = if let Some(ref dir) = args.output_dir {
+    let cikis_dizini = if let Some(ref dir) = args.output_dir {
         let path = Path::new(dir);
         if !path.exists() {
             fs::create_dir_all(path)?;
@@ -56,7 +51,7 @@ pub fn run(args: Quozart7Args) -> io::Result<()> {
         Path::new(&args.directory).to_path_buf()
     };
 
-    let mut files: Vec<PathBuf> = WalkDir::new(&args.directory)
+    let mut dosyalar: Vec<PathBuf> = WalkDir::new(&args.directory)
         .max_depth(1)
         .into_iter()
         .filter_map(Result::ok)
@@ -66,121 +61,128 @@ pub fn run(args: Quozart7Args) -> io::Result<()> {
             p.extension()
                 .map(|e| {
                     let ext = e.to_string_lossy().to_lowercase();
-                    ext == "jpg" || ext == "jpeg"
+                    ext == "jpg" || ext == "jpeg" || ext == "pdf" || ext == "txt"
                 })
                 .unwrap_or(false)
         })
         .collect();
 
-    if files.is_empty() {
-        println!("ERROR: No JPG/JPEG files found in the directory.");
+    if dosyalar.is_empty() {
+        println!("{}", dil.t("no_files"));
         return Ok(());
     }
-    files.sort();
+    dosyalar.sort();
 
-    let pb = ProgressBar::new(files.len() as u64);
+    let pb = ProgressBar::new(dosyalar.len() as u64);
     pb.set_style(
         ProgressStyle::with_template("[{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} {msg}")
             .unwrap()
             .progress_chars("++-"),
     );
-    pb.set_message("Processing Pages...");
+    pb.set_message(dil.t("quozart_scanning"));
 
-    let task_results: Vec<(Vec<(image::DynamicImage, String)>, PathBuf)> = pool.install(|| {
-        files
+    let gorev_sonuclari: Vec<(Vec<(String, String)>, PathBuf)> = havuz.install(|| {
+        dosyalar
             .par_iter()
-            .map(|file| {
-                let mut page_data = Vec::new();
+            .map(|dosya| {
+                let mut veri_listesi = Vec::new();
+                let uzanti = dosya
+                    .extension()
+                    .and_then(|e| e.to_str())
+                    .unwrap_or("")
+                    .to_lowercase();
 
-                if let Ok(img) = image::open(file) {
-                    let (w, h) = img.dimensions();
+                if uzanti == "txt" {
+                    if let Ok(icerik) = fs::read_to_string(dosya) {
+                        veri_listesi.push((icerik, "duz_metin".to_string()));
+                    }
+                } else if uzanti == "pdf" {
+                    println!("{} {:?}", dil.t("pdf_detected"), dosya);
+                } else if (uzanti == "jpg" || uzanti == "jpeg")
+                    && let Ok(img) = image::open(dosya)
+                {
+                    let (sol_sayfa, sag_sayfa) = Storme::sayfayi_bol(&img);
 
-                    //universal side-by-side
-                    let left_page = img.crop_imm(0, 0, w / 2, h);
-                    let right_page = img.crop_imm(w / 2, 0, w / 2, h);
+                    let sol_metin = motor
+                        .boru_hatti
+                        .metin_uret(&sol_sayfa)
+                        .unwrap_or_else(|e| format!("[{}: {}]", dil.t("left_page_error"), e));
 
-                    page_data.push((left_page, "left".to_string()));
-                    page_data.push((right_page, "right".to_string()));
+                    let sag_metin = motor
+                        .boru_hatti
+                        .metin_uret(&sag_sayfa)
+                        .unwrap_or_else(|e| format!("[{}: {}]", dil.t("right_page_error"), e));
+
+                    veri_listesi.push((sol_metin, "sol".to_string()));
+                    veri_listesi.push((sag_metin, "sag".to_string()));
                 }
 
                 pb.inc(1);
-                (page_data, file.clone())
+                (veri_listesi, dosya.clone())
             })
             .collect()
     });
-    pb.finish_with_message("OCR & Processing completed!");
 
-    let mut used = HashSet::new();
-    let mut report = Quozart7Report {
-        success: vec![],
-        failed: vec![],
+    pb.finish_with_message(dil.t("saving_markdown"));
+
+    let mut rapor = Quozart7Rapor {
+        basarili: vec![],
+        basarisiz: vec![],
     };
 
-    println!("Saving files and generating unique names...");
+    let mut sayac = 1;
 
-    for (pages, original_path) in task_results {
-        for (half, side) in pages {
-            let page_num = extractor.extract(&half, Some(side.as_str()), args.top);
+    for (sayfalar, orijinal_yol) in gorev_sonuclari {
+        for (icerik_metni, taraf) in sayfalar {
+            let dosya_adi_md = format!("{}_{:04}.md", args.prefix, sayac);
+            let dosya_adi_txt = format!("{}_{:04}.txt", args.prefix, sayac);
 
-            match page_num {
-                Some(num) => {
-                    let final_path =
-                        generate_unique_name(&output_dir, &args.prefix, &num, &mut used);
-                    if half.save(&final_path).is_ok() {
-                        report
-                            .success
-                            .push(final_path.to_string_lossy().to_string());
-                    }
-                }
-                None => {
-                    report
-                        .failed
-                        .push(format!("{} ({})", original_path.display(), side));
-                }
+            let hedef_yol_md = cikis_dizini.join(dosya_adi_md);
+            let hedef_yol_txt = cikis_dizini.join(dosya_adi_txt);
+
+            let markdown_cikti = format!(
+                "# {}\n- {}: {:?}\n- {}: {}\n\n{}",
+                dil.t("md_data"),
+                dil.t("md_source"),
+                orijinal_yol,
+                dil.t("md_mode"),
+                taraf,
+                icerik_metni
+            );
+
+            let md_basarili = fs::write(&hedef_yol_md, &markdown_cikti).is_ok();
+            let txt_basarili = fs::write(&hedef_yol_txt, &icerik_metni).is_ok();
+
+            if md_basarili && txt_basarili {
+                rapor
+                    .basarili
+                    .push(hedef_yol_md.to_string_lossy().to_string());
+                rapor
+                    .basarili
+                    .push(hedef_yol_txt.to_string_lossy().to_string());
+                sayac += 1;
+            } else {
+                rapor
+                    .basarisiz
+                    .push(format!("{:?} ({})", orijinal_yol, taraf));
             }
         }
     }
 
-    let report_filename = format!("{}_report.json", args.prefix);
+    let rapor_adi = format!("{}_rapor.json", args.prefix);
+    let rapor_yolu = cikis_dizini.join(rapor_adi);
+    let json = serde_json::to_string_pretty(&rapor).unwrap();
+    let _ = fs::write(&rapor_yolu, json);
 
-    let report_path = output_dir.join(report_filename);
-
-    let json = serde_json::to_string_pretty(&report).unwrap();
-
-    match fs::write(&report_path, json) {
-        Ok(_) => println!("Report generated: {}", report_path.display()),
-        Err(e) => println!("Failed to generate report: {}", e),
-    }
-
-    println!("\n Transaction Completed!");
+    println!("\n {}", dil.t("quozart_done"));
     println!(
-        "Success: {}, Failed: {}",
-        report.success.len(),
-        report.failed.len()
+        "{}: {}, {}: {}",
+        dil.t("success_label"),
+        rapor.basarili.len(),
+        dil.t("fail_label"),
+        rapor.basarisiz.len()
     );
-    println!("Report: {}", report_path.display());
+    println!("{}: {}", dil.t("report_file"), rapor_yolu.display());
 
     Ok(())
-}
-
-fn generate_unique_name(
-    dir: &Path,
-    prefix: &str,
-    number: &str,
-    used: &mut HashSet<String>,
-) -> PathBuf {
-    let mut counter = 0;
-    loop {
-        let name = if counter == 0 {
-            format!("{}_{}.jpg", prefix, number)
-        } else {
-            format!("{}_{}_{}.jpg", prefix, number, counter)
-        };
-
-        if !used.contains(&name) && !dir.join(&name).exists() {
-            used.insert(name.clone());
-            return dir.join(name);
-        }
-        counter += 1;
-    }
 }

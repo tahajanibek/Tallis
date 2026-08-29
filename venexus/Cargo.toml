@@ -1,0 +1,20 @@
+[package]
+name = "venexus"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+candle-core = "0.11"
+candle-nn = "0.11"
+candle-transformers = "0.11"
+tokenizers = "0.20"
+image = "0.25"
+hf-hub = "0.3"
+anyhow = "1.0"
+safetensors = "0.3"
+
+[features]
+default = []
+mkl = ["candle-core/mkl", "candle-nn/mkl"]
+cuda = ["candle-core/cuda", "candle-nn/cuda"]
+metal = ["candle-core/metal", "candle-nn/metal"]
