@@ -42,7 +42,7 @@ Başlangıçta model kontrolü yapılır. Eğer core/models/ dizininde bir model
     Linux, Windows, macOS
 ```
 
-### 🐧 Linux için gerekli kütüphaneler ve bağımlılıklar:
+### 🐧 Linux için gerekli kütüphaneler ve bağımlılıklar: ![Linux](https://img.shields.io/badge/Linux-yellow?logo=linux&logoColor=black)
 
   *Rust derleyicisi (rustc, cargo)*
   
@@ -64,7 +64,7 @@ sudo apt update
 sudo apt install build-essential pkg-config libssl-dev
 ```
 
-**Red Hat / Fedora (RPM) tabanlı sistemler**
+**Red Hat / Fedora (RPM) tabanlı sistemler** ![Red Hat](https://img.shields.io/badge/Red%20Hat-black?logo=redhat&logoColor=EE0000)
 ```
 sudo dnf update
 sudo dnf install gcc pkgconf-pkg-config openssl-devel
@@ -75,7 +75,8 @@ sudo dnf install gcc pkgconf-pkg-config openssl-devel
 sudo pacman -S base-devel rust cargo
 ```
 
-** macOS için**
+** macOS için** ![macOS](https://img.shields.io/badge/macOS-darkgray?logo=apple&logoColor=white)
+
 Apple sistemlerinde Xcode komut satırı araçları ve Homebrew üzerinden Rust kurulumu önerilir:
 ```
 xcode-select --install
@@ -221,8 +222,20 @@ Araç, hem kişisel arşiv yönetimi hem de akademik araştırmalarda yapıland�
 
 ## 👤 Geliştirici
 
-**Taha Janibek / Eklipse**
+**Taha Janibek**
 
-📧 tahajanibek@mail.ru
+<div style="margin-bottom: 8px;">
+  <a href="#">
+    <span style="display: inline-flex; align-items: stretch; border-radius: 3px; overflow: hidden; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; font-size: 11px; font-weight: 700; line-height: 1.3; text-shadow: 0 1px 0 rgba(0,0,0,0.2);">
+      <span style="background-color: #24292e; display: flex; align-items: center; justify-content: center; padding: 4px 6px;">
+        <img src="https://raw.githubusercontent.com/tahajanibek/tatnet-ethash/refs/heads/main/assets/eklipse_red_24.svg" height="13" style="width: auto; display: block;" />
+      </span>
+      <span style="background-color: #444444; color: #ffffff; display: flex; align-items: center; padding: 4px 8px;">
+        Eklipse
+      </span>
+    </span>
+  </a>
+</div>    
 
+**📧 tahajanibek@mail.ru**    
 🌐 [tahajanibek.asia](tahajanibek.asia)
