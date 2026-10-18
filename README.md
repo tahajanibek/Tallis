@@ -1,6 +1,5 @@
 #  Tallis  ![Rust](https://img.shields.io/badge/Rust-orange?logo=rust&logoColor=white) ![License](https://img.shields.io/badge/License-BSD_3--Clause-red?logo=freebsd&logoColor=red)
 
-## VLM Destekli E-Kitap ve Görsel Metin Çıkarma Motoru
 
 **Tallis**, dijital kitapları (PDF, DjVu, EPUB vb.) ve yüksek çözünürlüklü belge görsellerini işlemek için tamamen yerel donanım üzerinde çalışan, performans ve hız odaklı hibrit bir metin çıkarma ve görsel tarama motorudur. Sıfır maliyetli soyutlama ve donanım hızlandırma desteği ile öne çıkar.
 
@@ -165,7 +164,7 @@ Bu modül, hedef dizindeki belirtilen uzantıya sahip (örn. jpg) dosyaları, ol
 
 ## 🧠 Geliştirici Notları
 
-Tallis tarafından geliştirilen bu yazılım, açık kaynaklı ve geliştirilmeye açıktır.
+Taha Janıbek tarafından geliştirilen bu yazılım, açık kaynaklı ve geliştirilmeye açıktır.
 
 Görsel veri akışlarını, yapay zeka modelleriyle yerel donanımda tamamen izole bir şekilde harmanlamak hedeflenmiştir.
 
